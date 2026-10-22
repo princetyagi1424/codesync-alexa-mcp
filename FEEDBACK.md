@@ -1,48 +1,39 @@
-# Developer Experience Feedback — Amazon Developer / Alexa+ MCP Team
+# Developer Experience Feedback — Amazon Developer Hackathon 2026
 
-**Submission:** CodeSync AI  
-**Track:** Alexa+  
-**Hackathon:** Amazon Developer Hackathon 2026  
+**Project:** CodeSync AI — Voice-first PR Guardian  
+**Primary track:** Alexa+ simulated web experience  
 **Date:** October 2026
 
----
+## Tools and what they were used for
+
+- **Alexa+ track resources and documentation:** used to select the browser-based simulated-experience path and shape a conversational developer workflow.
+- **React/Vite simulator:** provides the voice/text UI and visible tool-execution inspector.
+- **GitHub OAuth and GitHub REST API:** authenticate the user, enumerate repositories, list open PRs, fetch changed-file patches, and post an approved PR conversation comment.
+- **Gemini API:** provides free-form conversational tool orchestration when available. Supported GitHub commands have a direct deterministic path so basic operations can continue during a temporary model outage.
+- **Node.js/Express/TypeScript:** server-side routing, OAuth callback, session handling, tool dispatch, and rule-based diff checks.
 
 ## What worked well
 
-1. **MCP tool schema clarity**  
-   Defining tools with explicit `inputSchema` and descriptions made the Gemini function-calling loop straightforward. The separation between tool *declaration* and tool *dispatch* kept the backend readable and testable.
+1. **A clear simulated-experience path:** a web UI was enough to prototype and show a conversational Alexa+-style developer workflow without claiming access to partner-only device tooling.
+2. **Human-in-the-loop writes:** draft → review → explicit approval is a better default for a voice interface that can create public GitHub comments.
+3. **Tool visibility:** an inspector with the actual operation, status, payload summary, and duration makes debugging and demos easier to understand.
+4. **Per-user GitHub OAuth:** each signed-in user can act with their own GitHub access rather than sharing a browser-side personal token.
 
-2. **Local-first resilience**  
-   Building offline mocks from day one meant we could iterate on the full UX (including the approval flow) without burning API quota or waiting on network conditions. This pattern should be encouraged in official Alexa+ MCP samples.
+## What needs work / actionable friction
 
-3. **Human-in-the-loop as a first-class concept**  
-   Treating write tools as "draft → confirm → execute" rather than fire-and-forget felt natural for voice. The UI and the LLM system prompt reinforced the same contract, which reduced accidental mutations during testing.
+1. **Access to Alexa+ add-on tooling:** the public hackathon FAQ says the Category SDK, MCP Toolkit, CLI, and Web Simulator are in preview and available only to selected partners. The docs should surface the available public simulation route prominently so participants do not spend time looking for an unavailable sign-up flow.
+2. **Tool traffic observability:** an official embeddable inspector for simulated Alexa+ tools—showing invocation, result/error, latency, and whether data was live or simulated—would make it easier to prove integration quality.
+3. **Failure semantics:** model provider 503 responses should be documented with recommended retry/backoff and examples of how to keep non-AI deterministic actions working. The app should distinguish “AI unavailable” from “GitHub returned no PRs” and “a GitHub request failed.”
+4. **OAuth callback onboarding:** a concise local/production callback matrix with exact examples would prevent redirect_uri mismatch errors.
+5. **Server-side session guidance:** web-simulator examples should explicitly show a durable production session store, secure cookie configuration, and secret handling—not only local-development setup.
 
----
+## Would I build with Amazon developer tools again?
 
-## Friction points & suggestions
+**Yes, with a caveat.** The simulated Alexa+ path let us test an interaction design quickly. I would like to see broader public access to preview tools, a tested starter that works for hackathon participants, and an official observability component for tool calls.
 
-1. **Documentation gap: voice-to-MCP mapping**  
-   Official guides focus on skill manifests and SSML. A short reference on mapping spoken intents → MCP tool selection (including multi-turn confirmation) would accelerate teams building conversational developer tools.
+## Feature requests
 
-2. **Inspector / observability**  
-   We built a live JSON payload drawer because there was no standard "MCP traffic viewer" for web simulators. A lightweight, embeddable inspector component or browser extension from the Alexa+ team would help every hackathon project prove authenticity.
-
-3. **Secret handling guidance**  
-   Clearer sample patterns for "keys never leave the backend" (especially when a web simulator is involved) would prevent common mistakes. Our architecture enforces this strictly; making it the default template would raise the quality bar.
-
-4. **Rate-limit & fallback ergonomics**  
-   Gemini and GitHub both rate-limit under demo load. First-class support for declarative fallback responses inside MCP tool results (e.g., an `isFallback` flag in the protocol) would make resilient demos easier to standardize.
-
-5. **TypeScript MCP SDK maturity**  
-   The SDK is usable, but richer TypeScript generics for tool input/output would reduce boilerplate and catch schema drift at compile time.
-
----
-
-## One thing we hope Alexa+ ships next
-
-A **hosted MCP bridge** that lets a developer register a self-hosted TypeScript MCP server once and immediately invoke its tools from both the Alexa mobile app and the Echo device, with the same human-approval semantics we implemented here.
-
----
-
-Thank you for creating a track that rewards real architecture and security discipline. We enjoyed building CodeSync AI.
+- **Critical:** publish a stable public Alexa+ simulation/MCP starter that runs from a fresh clone with minimal configuration.
+- **Important:** provide a reference for multi-turn state and approval flows for write actions.
+- **Important:** provide a standard inspector for real versus fallback tool results and provider errors.
+- **Nice-to-have:** publish voice-first UX patterns for reviewing, confirming, and cancelling actions.

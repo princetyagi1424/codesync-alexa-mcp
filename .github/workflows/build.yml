@@ -1,0 +1,48 @@
+name: Build and Typecheck
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "hackathon/**"
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend build and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        working-directory: backend
+        run: npm install
+      - name: Typecheck backend
+        working-directory: backend
+        run: npm run typecheck
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+      - name: Run unit tests
+        working-directory: backend
+        run: npm test
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm install
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build

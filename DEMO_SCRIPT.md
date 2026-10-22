@@ -1,81 +1,55 @@
-# CodeSync AI — Demo Script (≈ 2 min 30 sec)
+# CodeSync AI — Demo Script (target: 2:30–2:50)
 
-**Target length:** 2:20–2:40  
-**Recording tips:** Full-screen browser at 1920×1080, backend + frontend already running, MCP Inspector visible, speak clearly and slightly slower than normal conversation.
+**Record only after a fresh local build and an end-to-end test.** Use a repository you control and an open PR with safe, reviewable changes. Do not rely on mock/demo content. If the selected repository has zero open PRs, choose a different repo or create a small test PR before recording.
 
----
+## 0:00–0:20 — Hook
 
-## [0:00 – 0:18] Hook & Problem
+**Show:** CodeSync AI, signed in with GitHub, repository dropdown, tool inspector.
 
-**Visual:** Landing on the CodeSync AI UI. Camera/screen shows the split view (Alexa Simulator left, MCP Inspector right). Light ring is idle.
+**Say:** “PR review is fragmented across GitHub, terminal and chat. CodeSync AI is a voice-first Alexa+ simulation for the first-pass review workflow: it reads real PR changes, flags suspicious patterns, and asks before writing anything.”
 
-**Spoken:**
-> "Developers waste hours switching between GitHub, terminal, and chat tools just to review a pull request. What if you could simply *say* what you need — and an AI that speaks MCP does the rest, safely?"
+## 0:20–0:45 — Authenticate and choose a repository
 
----
+**Show:** GitHub account and repository selector.
 
-## [0:18 – 0:35] Introducing CodeSync AI
+**Say:** “The repository list comes from the signed-in GitHub account. The app uses the current user's server-side OAuth session; it does not ask the user to paste a personal access token into the browser.”
 
-**Visual:** Point at the header badge "Zero frontend secrets" and "Human-in-the-loop writes". Briefly highlight the repository config bar.
+Do not reveal cookies, tokens, or private repository data in the recording.
 
-**Spoken:**
-> "Meet CodeSync AI — a self-hosted TypeScript MCP server paired with an Alexa+ web simulator. Secrets never leave the backend. Every write to GitHub requires your explicit approval."
+## 0:45–1:05 — List actual pull requests
 
----
+**Say/type:** “Alexa, check open PRs.”
 
-## [0:35 – 0:55] Step 1 — List open PRs
+**Show:** The actual PR list and corresponding tool entry in the inspector.
 
-**Visual:** Click the quick-action button **"Check open PRs"**.  
-Watch the Alexa light ring pulse.  
-Chat shows the list of PRs.  
-MCP Inspector populates with a `github_get_open_prs` tool call and JSON payload.
+**Say:** “These PRs are fetched from GitHub. If a repository has no open PRs, CodeSync reports an empty list rather than inventing examples.”
 
-**Spoken:**
-> "Alexa, check open PRs.  
-> Instantly the MCP tool `github_get_open_prs` fires. You can see the live JSON-RPC style payload in the inspector — proof the protocol is real. Three open pull requests appear."
+## 1:05–1:45 — Analyze one actual PR
 
----
+**Action:** Click the dynamic Analyze PR button for a PR that was returned, or type its actual PR number.
 
-## [0:55 – 1:35] Step 2 — Analyze a PR (static rules + AI)
+**Show:** Real changed-file patches, static findings, and inspector timing.
 
-**Visual:** Click **"Analyze PR #1"**.  
-Ring pulses again.  
-Chat returns findings (hardcoded secret, console.log, raw SQL).  
-Inspector shows `github_get_pr_diff` with staticAnalysis score and findings.  
-A draft review comment is prepared; UI marks "needs approval".
+**Say:** “The analyzer runs deterministic rules against changed lines. These findings are review signals, not an automatic verdict. A provider outage does not turn a failed GitHub request into fake code.”
 
-**Spoken:**
-> "Now: Analyze PR number 1 for bugs.  
-> CodeSync fetches the diff, then runs a *deterministic* static engine — catching hardcoded secrets, leftover console.logs, and raw SQL concatenation — before Gemini adds conversational insight.  
-> Notice it does *not* post anything. Instead it asks: 'Should I post this review comment to GitHub?' That is the human-in-the-loop guarantee."
+## 1:45–2:15 — Human approval before a write
 
----
+**Show:** The drafted review comment and the approval control.
 
-## [1:35 – 2:05] Step 3 — Human approval & write
+**Say:** “CodeSync drafts the review comment first. It does not post until the user explicitly approves.”
 
-**Visual:** Click **"Approve & post"**.  
-Inspector shows `github_post_comment` executing.  
-Chat confirms the comment was posted (or simulated in fallback mode).  
-Highlight the success entry in the inspector.
+Only click **Approve & post** if you are willing to publish that comment on the selected PR. Use your own test PR for the recording.
 
-**Spoken:**
-> "I say yes — approve and post comment.  
-> Only now does the write tool execute. The inspector records the exact payload and timing. If GitHub or Gemini had been unavailable, the resilient fallback mocks would have kept the demo alive — zero broken recordings."
+## 2:15–2:40 — Impact and close
 
----
+**Show:** The inspector containing the sequence of real operations.
 
-## [2:05 – 2:30] Closing & Why it wins
+**Say:** “CodeSync focuses on a repeatable maintainer workflow: real repository context, explainable first-pass checks, visibility into tool activity, and a human decision before a public write. It's a simulated Alexa+ experience with clear current limits, not a claim that it edits arbitrary repositories.”
 
-**Visual:** Zoom out to full UI. Quickly scroll the inspector to show the complete chain of tool calls. End on the architecture badges.
+## Recording checklist
 
-**Spoken:**
-> "CodeSync AI proves that MCP, Alexa+, and strict security can ship together: zero keys in the frontend, deterministic static analysis, live protocol visibility, and human approval before every mutation.  
-> That's production-ready developer experience for the Alexa+ era.  
-> Thank you."
-
----
-
-## Optional one-liners if time remains
-
-- "All of this runs with or without real API keys — offline mocks make judging frictionless."
-- "The same MCP tools can later be registered with any MCP-compatible host, including future Alexa+ skills."
+- Keep the video under three minutes; publish it publicly on YouTube or Vimeo in English.
+- Show the app actually functioning; include a real GitHub request and response.
+- Pick a PR with changes and permissions you control.
+- Never expose OAuth codes, cookies, API keys, private source, or secrets.
+- Do not say an MCP protocol server is live unless you have independently tested a Streamable HTTP MCP endpoint.

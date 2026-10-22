@@ -320,11 +320,35 @@ app.post(
 
       if (!utterance && !body.approve) {
         res.status(400).json({
-          error:
-            'utterance is required (or approve=true with pendingApproval)',
+          error: 'utterance is required',
+          alexaResponse: 'Please enter a request or select a supported action.',
+          toolUsed: null,
+          debugPayload: { error: 'missing_utterance' },
+          requiresApproval: false,
+          isFallback: false,
         });
         return;
       }
+
+      if (body.approve && (typeof body.approvalId !== 'string' || !body.approvalId.trim())) {
+        res.status(400).json({
+          error: true,
+          alexaResponse: 'No server-issued approval ID was provided. Analyze the pull request again before posting.',
+          toolUsed: null,
+          debugPayload: { error: 'missing_approval_id' },
+          requiresApproval: false,
+          isFallback: false,
+        });
+        return;
+      }
+
+      // Bind approval IDs to both this server session and the GitHub account (if signed in).
+      // Touch the session so express-session issues/persists its HttpOnly cookie even in demo mode.
+      Object.assign(req.session, { codesyncApprovalSession: true });
+      const approvalUser = (req.user as GitHubUser | undefined) || req.session?.githubUser;
+      const approvalUserId = approvalUser?.id
+        ? `github:${approvalUser.id}:session:${req.sessionID}`
+        : `session:${req.sessionID}`;
 
       // Never accept GitHub access tokens from the request body.
       const accessToken = getAccessToken(req);
@@ -335,7 +359,8 @@ app.post(
         repo,
         accessToken,
         conversationHistory: body.conversationHistory || [],
-        pendingApproval: body.pendingApproval || null,
+        approvalId: typeof body.approvalId === 'string' ? body.approvalId : undefined,
+        approvalUserId,
         approve: Boolean(body.approve),
       };
 

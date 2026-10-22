@@ -11,22 +11,32 @@ interface ChatMessage {
 }
 
 interface PendingApproval {
+  approvalId: string;
   tool: string;
-  arguments: Record<string, unknown>;
   draftComment: string;
 }
 
+interface AvailablePullRequest {
+  number: number;
+  title: string;
+}
+
+interface QuickAction {
+  label: string;
+  utterance: string;
+  isApprove?: boolean;
+}
+
 interface Props {
+  availablePullRequests: AvailablePullRequest[];
   messages: ChatMessage[];
   isProcessing: boolean;
   onSend: (utterance: string, approve?: boolean) => void;
   pendingApproval: PendingApproval | null;
 }
 
-const QUICK_ACTIONS = [
+const QUICK_ACTIONS: QuickAction[] = [
   { label: 'Check open PRs', utterance: 'Alexa, check open PRs' },
-  { label: 'Analyze PR #1', utterance: 'Analyze PR #1 for bugs' },
-  { label: 'Analyze PR #2', utterance: 'Analyze PR number 2 for security issues' },
   { label: 'Approve & post', utterance: 'Approve and post comment', isApprove: true },
 ];
 
@@ -69,7 +79,7 @@ function getSpeechRecognition(): SpeechRecognitionConstructor | null {
   return w.SpeechRecognition || w.webkitSpeechRecognition || null;
 }
 
-export default function AlexaSimulator({ messages, isProcessing, onSend, pendingApproval }: Props) {
+export default function AlexaSimulator({ availablePullRequests, messages, isProcessing, onSend, pendingApproval }: Props) {
   const [input, setInput] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState('');
@@ -78,6 +88,15 @@ export default function AlexaSimulator({ messages, isProcessing, onSend, pending
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const finalTranscriptRef = useRef('');
+
+  const quickActions: QuickAction[] = [
+    QUICK_ACTIONS[0],
+    ...availablePullRequests.slice(0, 5).map((pr) => ({
+      label: `Analyze PR #${pr.number}`,
+      utterance: `Analyze PR number ${pr.number} for security issues`,
+    })),
+    QUICK_ACTIONS[1],
+  ];
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -236,7 +255,7 @@ export default function AlexaSimulator({ messages, isProcessing, onSend, pending
     setInput('');
   };
 
-  const handleQuick = (action: (typeof QUICK_ACTIONS)[0]) => {
+  const handleQuick = (action: QuickAction) => {
     if (isProcessing) return;
     if (isListening) stopListening();
     if (action.isApprove) {
@@ -379,7 +398,7 @@ export default function AlexaSimulator({ messages, isProcessing, onSend, pending
 
       {/* Quick actions */}
       <div className="px-4 py-2 flex flex-wrap gap-2 border-t border-slate-800/60">
-        {QUICK_ACTIONS.map((action) => (
+        {quickActions.map((action) => (
           <button
             key={action.label}
             onClick={() => handleQuick(action)}

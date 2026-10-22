@@ -23,6 +23,11 @@ interface RepoSummary {
   open_issues_count: number;
 }
 
+interface AvailablePullRequest {
+  number: number;
+  title: string;
+}
+
 interface AuthUser {
   id: string;
   login: string;
@@ -41,8 +46,8 @@ interface ChatMessage {
 }
 
 interface PendingApproval {
+  approvalId: string;
   tool: string;
-  arguments: Record<string, unknown>;
   draftComment: string;
 }
 
@@ -78,6 +83,7 @@ export default function App() {
   // Auth state
   const [user, setUser] = useState<AuthUser | null>(null);
   const [repos, setRepos] = useState<RepoSummary[]>([]);
+  const [availablePullRequests, setAvailablePullRequests] = useState<AvailablePullRequest[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
   const [oauthConfigured, setOauthConfigured] = useState(false);
   const [repoDropdownOpen, setRepoDropdownOpen] = useState(false);
@@ -160,6 +166,7 @@ export default function App() {
     }
     setUser(null);
     setRepos([]);
+    setPendingApproval(null);
     setMessages((prev) => [
       ...prev,
       {
@@ -173,6 +180,9 @@ export default function App() {
 
   const selectRepo = (r: RepoSummary) => {
     setRepo({ owner: r.owner, repo: r.name });
+    // Do not leave a write approval active after changing its repository context.
+    setPendingApproval(null);
+    setAvailablePullRequests([]);
     setRepoDropdownOpen(false);
     setRepoSearch('');
   };
@@ -213,12 +223,14 @@ export default function App() {
       };
       setMessages((prev) => [...prev, userMsg]);
 
+      const approvalIntent = approve || /^(?:yes(?:[, ]+(?:please[, ]+)?(?:post(?: it| (?:the )?comment)?|go ahead))?|approve(?: and post(?: (?:the )?comment)?)?|post it|post (?:the )?comment|go ahead(?: and post(?: (?:the )?comment)?)?)[.! ]*$/i.test(utterance.trim());
+
       const requestBody = {
         utterance: approve ? 'approve' : utterance,
         owner: repo.owner,
         repo: repo.repo,
         approve,
-        pendingApproval: approve ? pendingApproval : null,
+        approvalId: approvalIntent ? pendingApproval?.approvalId : undefined,
         conversationHistory: messages
           .filter((m) => m.role === 'user' || m.role === 'assistant')
           .slice(-8)
@@ -242,12 +254,33 @@ export default function App() {
           body: JSON.stringify(requestBody),
         });
         const data = await res.json();
+
+        const prsToolCall = data.debugPayload?.toolCalls?.find(
+          (tc: any) => tc.name === 'github_get_open_prs'
+        );
+        if (prsToolCall) {
+          const resultText = prsToolCall.result?.content?.[0]?.text;
+          try {
+            const parsed = typeof resultText === 'string' ? JSON.parse(resultText) : resultText;
+            const items = Array.isArray(parsed?.pullRequests) ? parsed.pullRequests : [];
+            setAvailablePullRequests(
+              items
+                .map((pr: any) => ({
+                  number: Number(pr.number),
+                  title: String(pr.title || `PR #${pr.number}`),
+                }))
+                .filter((pr: AvailablePullRequest) => Number.isInteger(pr.number) && pr.number > 0)
+            );
+          } catch {
+            setAvailablePullRequests([]);
+          }
+        }
         const durationMs = Date.now() - start;
 
         addInspectorEntry({
           type: 'response',
           method: 'POST /api/alexa/process',
-          status: res.ok ? 'success' : 'error',
+          status: res.ok && !data.error ? 'success' : 'error',
           payload: data,
           durationMs,
           toolUsed: data.toolUsed,
@@ -471,6 +504,7 @@ export default function App() {
       <div className="flex-1 flex min-h-0">
         <div className="w-[60%] border-r border-slate-800 flex flex-col min-h-0">
           <AlexaSimulator
+            availablePullRequests={availablePullRequests}
             messages={messages}
             isProcessing={isProcessing}
             onSend={processUtterance}
