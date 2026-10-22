@@ -105,7 +105,7 @@ function run(): void {
         deletions: 0,
         changes: 1,
         patch:
-          '@@ -0,0 +1,1 @@\n+const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";',
+          '@@ -0,0 +1,1 @@\n+const credential = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";',
       },
     ];
     const result = svc.runStaticAnalysis(files);
