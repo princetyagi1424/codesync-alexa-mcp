@@ -133,7 +133,24 @@ export class LLMHandler {
       };
     }
 
-    if (this.fallbackMode || !this.model) {
+    const normalizedUtterance = req.utterance.toLowerCase();
+    const directGitHubCommand =
+      normalizedUtterance.includes('check open pr') ||
+      normalizedUtterance.includes('check open pull') ||
+      normalizedUtterance.includes('list pr') ||
+      normalizedUtterance.includes('open pull request') ||
+      normalizedUtterance.includes('what pull requests') ||
+      normalizedUtterance.includes('analyze pr') ||
+      normalizedUtterance.includes('analyze pull request') ||
+      normalizedUtterance.includes('review pr') ||
+      normalizedUtterance.includes('review pull request') ||
+      normalizedUtterance.includes('security issues') ||
+      /\\bpr\\s*#?\\d+\\b/i.test(normalizedUtterance) ||
+      /\\bpull request\\s+(?:number\\s+)?#?\\d+\\b/i.test(normalizedUtterance);
+
+    // Common GitHub workflows must not be blocked by a transient LLM outage.
+    // They use the same authenticated GitHub API and static analysis functions.
+    if (this.fallbackMode || !this.model || directGitHubCommand) {
       return this.offlineProcess(req, debugToolCalls);
     }
 
@@ -161,7 +178,7 @@ export class LLMHandler {
         tools: geminiTools as any,
       });
 
-      let result = await chat.sendMessage(contextualUtterance);
+      let result = await this.withGeminiRetry(() => chat.sendMessage(contextualUtterance));
       let response = result.response;
       let functionCalls = response.functionCalls?.() || [];
 
@@ -225,7 +242,7 @@ export class LLMHandler {
           } as Part);
         }
 
-        result = await chat.sendMessage(callParts);
+        result = await this.withGeminiRetry(() => chat.sendMessage(callParts));
         response = result.response;
         functionCalls = response.functionCalls?.() || [];
       }
@@ -255,10 +272,52 @@ export class LLMHandler {
         isFallback,
       };
     } catch (err) {
-      console.error('[LLMHandler] Gemini error, switching to offline:', err);
-      this.fallbackMode = true;
+      const status =
+        typeof err === 'object' && err !== null && 'status' in err
+          ? Number((err as { status?: unknown }).status)
+          : undefined;
+      const message = err instanceof Error ? err.message : String(err);
+
+      console.error('[LLMHandler] Gemini request failed; using supported GitHub workflow fallback:', {
+        status,
+        message,
+      });
+
+      // Do not permanently disable Gemini after one transient error.
       return this.offlineProcess(req, debugToolCalls);
     }
+  }
+
+  private async withGeminiRetry<T>(
+    operation: () => Promise<T>
+  ): Promise<T> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        const status =
+          typeof error === 'object' && error !== null && 'status' in error
+            ? Number((error as { status?: unknown }).status)
+            : undefined;
+
+        const retryable =
+          status === 408 ||
+          status === 429 ||
+          (status !== undefined && status >= 500 && status <= 599);
+
+        if (!retryable || attempt === 2) {
+          throw error;
+        }
+
+        const delayMs = 1000 * (2 ** attempt);
+        console.warn(
+          `[LLMHandler] Gemini returned ${status}; retrying in ${delayMs}ms (attempt ${attempt + 2}/3).`
+        );
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+
+    throw new Error('Gemini retry attempts exhausted.');
   }
 
   private offlineProcess(
@@ -271,7 +330,7 @@ export class LLMHandler {
       let toolUsed: string | null = null;
       let requiresApproval = false;
       let approvalPayload: ProcessResponse['approvalPayload'];
-      let isFallback = true;
+      let isFallback = false;
       const accessToken = req.accessToken;
 
       if (
@@ -295,6 +354,19 @@ export class LLMHandler {
         toolUsed = 'github_get_open_prs';
         isFallback = isFallback || !!result.metadata?.isFallback;
         const data = this.safeParse(result.content[0]?.text || '{}');
+        if (result.isError || data.error) {
+          return {
+            alexaResponse: `GitHub request failed: ${String(data.error || 'Unable to list pull requests')}. No mock data was used.`,
+            toolUsed,
+            debugPayload: {
+              request: { utterance: req.utterance, mode: 'direct-github' },
+              response: data,
+              toolCalls: debugToolCalls,
+            },
+            requiresApproval: false,
+            isFallback: false,
+          };
+        }
         const prs = data.pullRequests || [];
         if (prs.length === 0) {
           alexaResponse = 'There are currently no open pull requests in this repository.';
@@ -329,6 +401,19 @@ export class LLMHandler {
         toolUsed = 'github_get_pr_diff';
         isFallback = isFallback || !!result.metadata?.isFallback;
         const data = this.safeParse(result.content[0]?.text || '{}');
+        if (result.isError || data.error) {
+          return {
+            alexaResponse: `GitHub request failed: ${String(data.error || 'Unable to fetch pull request diff')}. No review draft was generated.`,
+            toolUsed,
+            debugPayload: {
+              request: { utterance: req.utterance, mode: 'direct-github' },
+              response: data,
+              toolCalls: debugToolCalls,
+            },
+            requiresApproval: false,
+            isFallback: false,
+          };
+        }
         const analysis = data.staticAnalysis || { findings: [], summary: 'No findings', score: 100 };
         const findings = analysis.findings || [];
 
