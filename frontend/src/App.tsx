@@ -220,12 +220,14 @@ export default function App() {
       };
       setMessages((prev) => [...prev, userMsg]);
 
+      const approvalIntent = approve || /^(?:yes(?:[, ]+(?:please[, ]+)?(?:post(?: it| (?:the )?comment)?|go ahead))?|approve(?: and post(?: (?:the )?comment)?)?|post it|post (?:the )?comment|go ahead(?: and post(?: (?:the )?comment)?)?)[.! ]*$/i.test(utterance.trim());
+
       const requestBody = {
         utterance: approve ? 'approve' : utterance,
         owner: repo.owner,
         repo: repo.repo,
         approve,
-        approvalId: approve ? pendingApproval?.approvalId : undefined,
+        approvalId: approvalIntent ? pendingApproval?.approvalId : undefined,
         conversationHistory: messages
           .filter((m) => m.role === 'user' || m.role === 'assistant')
           .slice(-8)
