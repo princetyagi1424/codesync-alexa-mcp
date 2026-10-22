@@ -3,8 +3,7 @@ import { Github, Zap, Shield, Activity, LogOut, ChevronDown, Lock, Loader2 } fro
 import AlexaSimulator from './components/AlexaSimulator';
 import McpInspector, { InspectorEntry } from './components/McpInspector';
 
-// Prefer explicit env; default to backend port so session cookies work across localhost ports
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { API_BASE, apiUrl } from './config';
 
 interface RepoConfig {
   owner: string;
@@ -94,7 +93,7 @@ export default function App() {
     async function loadMe() {
       setAuthLoading(true);
       try {
-        const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+        const res = await fetch(apiUrl('/api/auth/me'), { credentials: 'include' });
         const data = await res.json();
         if (cancelled) return;
         setOauthConfigured(!!data.oauthConfigured);
@@ -147,12 +146,12 @@ export default function App() {
 
   const handleLogin = () => {
     // Full-page redirect to backend OAuth start
-    window.location.href = `${API_BASE}/api/auth/github`;
+    window.location.href = apiUrl('/api/auth/github');
   };
 
   const handleLogout = async () => {
     try {
-      await fetch(`${API_BASE}/api/auth/logout`, {
+      await fetch(apiUrl('/api/auth/logout'), {
         method: 'POST',
         credentials: 'include',
       });
@@ -236,7 +235,7 @@ export default function App() {
 
       const start = Date.now();
       try {
-        const res = await fetch(`${API_BASE}/api/alexa/process`, {
+        const res = await fetch(apiUrl('/api/alexa/process'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',

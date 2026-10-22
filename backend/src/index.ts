@@ -34,6 +34,70 @@ const SESSION_SECRET =
 
 const isProd = process.env.NODE_ENV === 'production';
 
+// ---------------------------------------------------------------------------
+// CORS allowlist
+// ---------------------------------------------------------------------------
+// Always allowed: the known production frontend.
+const PRODUCTION_FRONTEND_ORIGINS = [
+  'https://codesync-alexa-mcp-three.vercel.app',
+];
+
+// Only allowed outside production (local development).
+const DEV_FRONTEND_ORIGINS = ['http://localhost:5173'];
+
+/**
+ * Turn a raw value (e.g. "https://app.example.com/") into a canonical origin
+ * ("https://app.example.com"). Returns null for anything that is not a valid
+ * http(s) URL, and for the wildcard "*" (never valid with credentials).
+ */
+function toOrigin(raw: string): string | null {
+  const value = raw.trim();
+  if (!value || value === '*') return null;
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.origin; // drops path, query and trailing slash
+  } catch {
+    return null;
+  }
+}
+
+function parseOriginList(raw: string | undefined): {
+  valid: string[];
+  invalid: string[];
+} {
+  const valid: string[] = [];
+  const invalid: string[] = [];
+
+  for (const part of (raw || '').split(',')) {
+    if (!part.trim()) continue;
+    const origin = toOrigin(part);
+    if (origin) valid.push(origin);
+    else invalid.push(part.trim());
+  }
+
+  return { valid, invalid };
+}
+
+// FRONTEND_URL and the optional CORS_ORIGINS may each hold a comma-separated list.
+const fromFrontendUrl = parseOriginList(process.env.FRONTEND_URL);
+const fromCorsOrigins = parseOriginList(process.env.CORS_ORIGINS);
+
+const allowedOrigins = new Set<string>([
+  ...PRODUCTION_FRONTEND_ORIGINS,
+  ...fromFrontendUrl.valid,
+  ...fromCorsOrigins.valid,
+  ...(isProd ? [] : DEV_FRONTEND_ORIGINS),
+]);
+
+const invalidOriginEntries = [
+  ...fromFrontendUrl.invalid,
+  ...fromCorsOrigins.invalid,
+];
+
+const rejectedOriginsLogged = new Set<string>();
+
 // Validate the port before attempting to listen.
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   throw new Error(`Invalid PORT configuration: ${process.env.PORT}`);
@@ -51,12 +115,44 @@ if (isProd) {
 }
 
 // CORS
-app.use(
-  cors({
-    origin: FRONTEND_URL,
-    credentials: true,
-  })
-);
+// Must be registered before every route/session middleware so that preflight
+// (OPTIONS) requests are answered here and never reach authentication.
+// The Access-Control-Allow-Origin header always echoes the exact requesting
+// origin (never "*"), which is required when credentials are enabled.
+const corsMiddleware = cors({
+  origin: (origin, callback) => {
+    // No Origin header: curl, server-to-server calls, health checks.
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    if (allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    // Do not throw: just omit the CORS headers so the browser blocks the call.
+    if (!rejectedOriginsLogged.has(origin)) {
+      rejectedOriginsLogged.add(origin);
+      console.warn(
+        `[CORS] Blocked origin "${origin}". Allowed origins: ${[
+          ...allowedOrigins,
+        ].join(', ')}`
+      );
+    }
+    callback(null, false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  maxAge: 600,
+  optionsSuccessStatus: 204,
+});
+
+app.use(corsMiddleware);
+// Explicit preflight handler for every path (answers with 204 + CORS headers).
+app.options('*', corsMiddleware);
 
 // Root route: useful for quickly checking whether the server responds.
 app.get('/', (_req: Request, res: Response) => {
@@ -82,6 +178,11 @@ app.get('/api/health', (_req: Request, res: Response) => {
     tools: MCP_TOOLS.map((tool) => tool.name),
     oauthConfigured: isOAuthConfigured(),
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+    nodeEnv: process.env.NODE_ENV || 'unset',
+    cors: {
+      frontendUrlEnvSet: Boolean(process.env.FRONTEND_URL),
+      allowedOrigins: [...allowedOrigins],
+    },
   });
 });
 
@@ -250,7 +351,28 @@ const server = app.listen(PORT, '0.0.0.0', () => {
       process.env.GEMINI_API_KEY ? 'configured' : 'missing'
     }`
   );
-  console.log(`Frontend URL: ${FRONTEND_URL}`);
+  console.log(`Frontend URL (FRONTEND_URL): ${FRONTEND_URL}`);
+  console.log(
+    `FRONTEND_URL env present: ${Boolean(process.env.FRONTEND_URL)}`
+  );
+  console.log(`NODE_ENV: ${process.env.NODE_ENV || 'unset'}`);
+  console.log(`CORS allowed origins: ${[...allowedOrigins].join(', ')}`);
+  if (invalidOriginEntries.length > 0) {
+    console.warn(
+      `[CORS] Ignored invalid origin entries: ${invalidOriginEntries.join(', ')}`
+    );
+  }
+  if (
+    !isProd &&
+    [...fromFrontendUrl.valid, ...fromCorsOrigins.valid].some((o) =>
+      o.startsWith('https://')
+    )
+  ) {
+    console.warn(
+      '[Config] NODE_ENV is not "production" but an https frontend origin is allowed. ' +
+        'Cross-site session cookies need NODE_ENV=production (Secure + SameSite=None).'
+    );
+  }
   console.log('========================================');
 });
 
