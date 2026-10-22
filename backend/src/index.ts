@@ -18,6 +18,47 @@ import {
 } from './auth';
 
 const app = express();
+const startedAt = Date.now();
+
+// Fatal-error diagnostics: log the full error, then exit non-zero so the
+// platform restarts the process. Errors are never swallowed.
+process.on('uncaughtException', (error) => {
+  console.error('[Fatal] uncaughtException:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Fatal] unhandledRejection:', reason);
+  process.exit(1);
+});
+
+process.on('exit', (code) => {
+  console.log(
+    `[Process] exit code=${code} pid=${process.pid} uptime=${Math.round(
+      (Date.now() - startedAt) / 1000
+    )}s`
+  );
+});
+
+// Request log: method, path, status and duration only.
+// Never logs query strings (OAuth callbacks carry codes), headers or bodies.
+// Registered first so it also sees CORS preflights and health checks.
+// If a public 502/503/504 appears WITHOUT a matching line here, the request
+// never reached this process (platform / routing problem).
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = process.hrtime.bigint();
+  // originalUrl keeps the full mount path; the query string is stripped.
+  const loggedPath = req.originalUrl.split('?')[0];
+  res.on('finish', () => {
+    const ms = Number(process.hrtime.bigint() - start) / 1e6;
+    console.log(
+      `[req] ${req.method} ${loggedPath} -> ${res.statusCode} ${ms.toFixed(
+        1
+      )}ms origin=${req.headers.origin || '-'}`
+    );
+  });
+  next();
+});
 
 const PORT = process.env.PORT
   ? Number(process.env.PORT)
@@ -174,6 +215,8 @@ app.get('/api/health', (_req: Request, res: Response) => {
     version: '2.0.0',
     timestamp: new Date().toISOString(),
     runtime: process.version,
+    pid: process.pid,
+    uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
     port: PORT,
     tools: MCP_TOOLS.map((tool) => tool.name),
     oauthConfigured: isOAuthConfigured(),
@@ -338,7 +381,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('========================================');
   console.log('CodeSync AI Backend v2.0 started');
   console.log(`Host: 0.0.0.0`);
-  console.log(`Port: ${PORT}`);
+  console.log(`Port: ${PORT} (from ${process.env.PORT ? 'PORT env' : 'default'})`);
+  console.log(`PID: ${process.pid} | Node: ${process.version}`);
+  console.log(`Bound address: ${JSON.stringify(server.address())}`);
+  console.log(`Started at: ${new Date(startedAt).toISOString()}`);
   console.log(`Health: /api/health`);
   console.log(`MCP tools: /api/mcp/tools`);
   console.log(
