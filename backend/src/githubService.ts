@@ -43,117 +43,32 @@ export interface AnalysisResult {
   score: number;
 }
 
-const MOCK_PRS: PullRequest[] = [
-  {
-    number: 1,
-    title: 'feat: add user authentication module',
-    state: 'open',
-    user: { login: 'dev-alice' },
-    created_at: '2026-10-15T10:00:00Z',
-    updated_at: '2026-10-20T14:30:00Z',
-    html_url: 'https://github.com/example/repo/pull/1',
-    body: 'Implements JWT-based auth with refresh tokens.',
-    draft: false,
-    labels: [{ name: 'enhancement' }],
-  },
-  {
-    number: 2,
-    title: 'fix: resolve race condition in payment service',
-    state: 'open',
-    user: { login: 'dev-bob' },
-    created_at: '2026-10-18T08:15:00Z',
-    updated_at: '2026-10-21T09:00:00Z',
-    html_url: 'https://github.com/example/repo/pull/2',
-    body: 'Adds mutex locking around concurrent payment updates.',
-    draft: false,
-    labels: [{ name: 'bug' }, { name: 'priority-high' }],
-  },
-  {
-    number: 3,
-    title: 'chore: upgrade dependencies and clean up logs',
-    state: 'open',
-    user: { login: 'dev-carol' },
-    created_at: '2026-10-19T16:45:00Z',
-    updated_at: '2026-10-21T11:20:00Z',
-    html_url: 'https://github.com/example/repo/pull/3',
-    body: 'Removes debug console.logs and updates axios.',
-    draft: true,
-    labels: [{ name: 'chore' }],
-  },
-];
 
-const MOCK_DIFF_PR1 = `diff --git a/src/auth/login.ts b/src/auth/login.ts
-index 1111111..2222222 100644
---- a/src/auth/login.ts
-+++ b/src/auth/login.ts
-@@ -10,6 +10,15 @@ export async function login(email: string, password: string) {
-   const user = await db.users.findOne({ email });
-   if (!user) {
-     throw new Error('User not found');
-   }
-+  // TODO: rate limit login attempts
-+  const apiKey = "sk-live-abc123xyz789secret";
-+  console.log("User login attempt:", email, password);
-+  const query = "SELECT * FROM sessions WHERE user_id = " + user.id;
-+  const result = await db.raw(query);
-   const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET);
-   return { token, user };
- }
-diff --git a/src/auth/token.ts b/src/auth/token.ts
-index 3333333..4444444 100644
---- a/src/auth/token.ts
-+++ b/src/auth/token.ts
-@@ -5,8 +5,12 @@ export function verifyToken(token: string) {
-   try {
-     return jwt.verify(token, process.env.JWT_SECRET);
-   } catch (err) {
-     return null;
-   }
-+  // Missing try-catch around external call
-+  const response = await fetch("https://api.example.com/validate");
-+  return response.json();
- }
-`;
+function formatGitHubError(operation: string, error: unknown): Error {
+  const axErr = error as AxiosError<{ message?: string }>;
+  const status = axErr.response?.status;
+  const detail = axErr.response?.data?.message || axErr.message || String(error);
 
-const MOCK_DIFF_PR2 = `diff --git a/src/payments/processor.ts b/src/payments/processor.ts
-index 5555555..6666666 100644
---- a/src/payments/processor.ts
-+++ b/src/payments/processor.ts
-@@ -20,10 +20,18 @@ export async function processPayment(orderId: string, amount: number) {
-   const order = await Order.findById(orderId);
-   if (!order) throw new Error('Order not found');
-+  console.log("Processing payment for order", orderId, "amount", amount);
-+  const secret = "whsec_test_secret_key_do_not_commit";
-   order.status = 'processing';
-   await order.save();
-+  // Potential race condition still present without proper locking
-   const charge = await stripe.charges.create({
-     amount: amount * 100,
-     currency: 'usd',
-     source: order.paymentSource,
-   });
-   return charge;
- }
-`;
-
-const MOCK_DIFF_PR3 = `diff --git a/src/utils/logger.ts b/src/utils/logger.ts
-index 7777777..8888888 100644
---- a/src/utils/logger.ts
-+++ b/src/utils/logger.ts
-@@ -1,8 +1,6 @@
- export function log(message: string) {
--  console.log("[DEBUG]", message);
--  console.log("[INFO]", new Date().toISOString(), message);
-+  // cleaned up debug logs
-   if (process.env.NODE_ENV !== 'production') {
-     console.info(message);
-   }
- }
-`;
+  if (status === 401) {
+    return new Error(`${operation} failed (GitHub 401): sign-in expired or token was rejected. Sign in again.`);
+  }
+  if (status === 403) {
+    return new Error(`${operation} failed (GitHub 403): insufficient permissions or API rate limit. ${detail}`);
+  }
+  if (status === 404) {
+    return new Error(`${operation} failed (GitHub 404): repository or pull request was not found, or this account cannot access it.`);
+  }
+  if (status === 429) {
+    return new Error(`${operation} failed (GitHub 429): rate limit reached. Retry later.`);
+  }
+  return new Error(`${operation} failed${status ? ` (GitHub ${status})` : ''}: ${detail}`);
+}
 
 function createClient(accessToken?: string): AxiosInstance {
   const token = accessToken || process.env.GITHUB_TOKEN || '';
   return axios.create({
+    adapter: 'fetch',
+    fetchOptions: { cache: 'no-store' },
     baseURL: 'https://api.github.com',
     headers: {
       Accept: 'application/vnd.github.v3+json',
@@ -180,8 +95,7 @@ export class GitHubService {
   ): Promise<{ prs: PullRequest[]; isFallback: boolean }> {
     const token = this.resolveToken(accessToken);
     if (!token) {
-      console.warn('[GitHubService] No OAuth/PAT token — using offline PR mocks');
-      return { prs: MOCK_PRS, isFallback: true };
+      throw new Error('GitHub authentication is required to list pull requests. Sign in with GitHub and retry.');
     }
 
     try {
@@ -203,9 +117,9 @@ export class GitHubService {
       }));
       return { prs, isFallback: false };
     } catch (error) {
-      const axErr = error as AxiosError;
-      console.warn(`[GitHubService] getOpenPullRequests failed: ${axErr.response?.status || axErr.message}`);
-      return { prs: MOCK_PRS, isFallback: true };
+      const reported = formatGitHubError('Listing open pull requests', error);
+      console.warn(`[GitHubService] ${reported.message}`);
+      throw reported;
     }
   }
 
@@ -217,7 +131,7 @@ export class GitHubService {
   ): Promise<{ diff: PRDiff; analysis: AnalysisResult; isFallback: boolean }> {
     const token = this.resolveToken(accessToken);
     if (!token) {
-      return this.getMockDiff(pullNumber);
+      throw new Error('GitHub authentication is required to fetch a pull request diff. Sign in with GitHub and retry.');
     }
 
     try {
@@ -246,39 +160,10 @@ export class GitHubService {
         isFallback: false,
       };
     } catch (error) {
-      const axErr = error as AxiosError;
-      console.warn(`[GitHubService] getPullRequestDiff failed: ${axErr.response?.status || axErr.message}`);
-      return this.getMockDiff(pullNumber);
+      const reported = formatGitHubError(`Fetching diff for PR #${pullNumber}`, error);
+      console.warn(`[GitHubService] ${reported.message}`);
+      throw reported;
     }
-  }
-
-  private getMockDiff(pullNumber: number): { diff: PRDiff; analysis: AnalysisResult; isFallback: boolean } {
-    let rawDiff = MOCK_DIFF_PR1;
-    if (pullNumber === 2) rawDiff = MOCK_DIFF_PR2;
-    if (pullNumber === 3) rawDiff = MOCK_DIFF_PR3;
-
-    const files: DiffFile[] = [
-      {
-        filename:
-          pullNumber === 1
-            ? 'src/auth/login.ts'
-            : pullNumber === 2
-            ? 'src/payments/processor.ts'
-            : 'src/utils/logger.ts',
-        status: 'modified',
-        additions: 8,
-        deletions: 2,
-        changes: 10,
-        patch: rawDiff,
-      },
-    ];
-
-    const analysis = this.runStaticAnalysis(files);
-    return {
-      diff: { pullNumber, files, rawDiff },
-      analysis,
-      isFallback: true,
-    };
   }
 
   runStaticAnalysis(files: DiffFile[]): AnalysisResult {
@@ -464,12 +349,7 @@ export class GitHubService {
   ): Promise<{ success: boolean; commentUrl?: string; isFallback: boolean; message: string }> {
     const token = this.resolveToken(accessToken);
     if (!token) {
-      return {
-        success: true,
-        commentUrl: `https://github.com/${owner}/${repo}/pull/${pullNumber}#issuecomment-mock-${Date.now()}`,
-        isFallback: true,
-        message: `[FALLBACK] Comment would have been posted to PR #${pullNumber}. Body length: ${commentBody.length} chars.`,
-      };
+      throw new Error('GitHub authentication is required. The comment was not posted.');
     }
 
     try {
@@ -484,14 +364,9 @@ export class GitHubService {
         message: `Comment posted successfully to PR #${pullNumber}`,
       };
     } catch (error) {
-      const axErr = error as AxiosError;
-      console.warn(`[GitHubService] postPRComment failed: ${axErr.response?.status || axErr.message}`);
-      return {
-        success: true,
-        commentUrl: `https://github.com/${owner}/${repo}/pull/${pullNumber}#issuecomment-mock-${Date.now()}`,
-        isFallback: true,
-        message: `[FALLBACK after error] Simulated comment post for PR #${pullNumber}`,
-      };
+      const reported = formatGitHubError(`Posting a comment to PR #${pullNumber}`, error);
+      console.warn(`[GitHubService] ${reported.message}`);
+      throw reported;
     }
   }
 }
