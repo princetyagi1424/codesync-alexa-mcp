@@ -2,7 +2,7 @@
 // Every request in the app must be built with apiUrl() so that production
 // never silently falls back to localhost.
 
-const PRODUCTION_API_URL = 'https://birdcage-cautious-whale.abasthan.app';
+const PRODUCTION_API_URL = ''; // Cloudflare serves the frontend and /api/* from the same origin.
 const DEVELOPMENT_API_URL = 'http://localhost:5000';
 
 function normalizeBaseUrl(raw: string | undefined): string | null {
@@ -29,8 +29,8 @@ function resolveApiBase(): string {
     );
   }
 
-  // `vite dev` keeps working against the local backend; a production build
-  // without VITE_API_URL uses the known production backend instead of localhost.
+  // Local development uses the standalone Node backend. On Cloudflare, an empty
+  // production base URL makes API requests same-origin (e.g. /api/health).
   return import.meta.env.DEV ? DEVELOPMENT_API_URL : PRODUCTION_API_URL;
 }
 
