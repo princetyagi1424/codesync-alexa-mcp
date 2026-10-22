@@ -5,8 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
+    "start": "node -r dotenv/config dist/index.js",
+    "dev": "node -r dotenv/config -r ts-node/register src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "ts-node --transpile-only src/staticAnalysis.test.ts && ts-node --transpile-only src/approvalStore.test.ts"
   },
@@ -32,7 +32,8 @@
     "@types/passport": "^1.0.16",
     "@types/passport-github2": "^1.2.9",
     "ts-node": "^10.9.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "wrangler": "^4.151.3"
   },
   "engines": {
     "node": ">=18.0.0"
