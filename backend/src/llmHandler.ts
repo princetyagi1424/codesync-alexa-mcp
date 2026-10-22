@@ -145,8 +145,8 @@ export class LLMHandler {
       normalizedUtterance.includes('review pr') ||
       normalizedUtterance.includes('review pull request') ||
       normalizedUtterance.includes('security issues') ||
-      /\\bpr\\s*#?\\d+\\b/i.test(normalizedUtterance) ||
-      /\\bpull request\\s+(?:number\\s+)?#?\\d+\\b/i.test(normalizedUtterance);
+      /\bpr\s*#?\d+\b/i.test(normalizedUtterance) ||
+      /\bpull request\s+(?:number\s+)?#?\d+\b/i.test(normalizedUtterance);
 
     // Common GitHub workflows must not be blocked by a transient LLM outage.
     // They use the same authenticated GitHub API and static analysis functions.
