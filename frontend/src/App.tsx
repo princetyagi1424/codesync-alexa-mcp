@@ -46,8 +46,8 @@ interface ChatMessage {
 }
 
 interface PendingApproval {
+  approvalId: string;
   tool: string;
-  arguments: Record<string, unknown>;
   draftComment: string;
 }
 
@@ -225,7 +225,7 @@ export default function App() {
         owner: repo.owner,
         repo: repo.repo,
         approve,
-        pendingApproval: approve ? pendingApproval : null,
+        approvalId: approve ? pendingApproval?.approvalId : undefined,
         conversationHistory: messages
           .filter((m) => m.role === 'user' || m.role === 'assistant')
           .slice(-8)
@@ -275,7 +275,7 @@ export default function App() {
         addInspectorEntry({
           type: 'response',
           method: 'POST /api/alexa/process',
-          status: res.ok ? 'success' : 'error',
+          status: res.ok && !data.error ? 'success' : 'error',
           payload: data,
           durationMs,
           toolUsed: data.toolUsed,
