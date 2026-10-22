@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI, GenerativeModel, Content, Part } from '@google/generative-ai';
 import { dispatchMCPTool, getToolDefinitionsForLLM, MCPToolCall, MCPToolResult } from './mcpServer';
+import { approvalStore } from './approvalStore';
 
 export interface ProcessRequest {
   utterance: string;
@@ -8,11 +9,10 @@ export interface ProcessRequest {
   /** Per-user GitHub OAuth token from session — never sent to the browser */
   accessToken?: string;
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
-  pendingApproval?: {
-    tool: string;
-    arguments: Record<string, unknown>;
-    draftComment?: string;
-  } | null;
+  /** A server-issued, one-shot approval identifier; never accept write args from the client. */
+  approvalId?: string;
+  /** Bound by the server to the authenticated user and current session. */
+  approvalUserId: string;
   approve?: boolean;
 }
 
@@ -32,11 +32,12 @@ export interface ProcessResponse {
   };
   requiresApproval: boolean;
   approvalPayload?: {
+    approvalId: string;
     tool: string;
-    arguments: Record<string, unknown>;
     draftComment: string;
   };
   isFallback: boolean;
+  error?: boolean;
 }
 
 const SYSTEM_INSTRUCTION = `You are CodeSync AI, an expert senior software engineer and code review assistant integrated with Alexa+.
@@ -94,11 +95,37 @@ export class LLMHandler {
     let toolUsed: string | null = null;
     const accessToken = req.accessToken;
 
-    // Handle explicit approval path first (human-in-the-loop)
-    if (req.approve && req.pendingApproval && req.pendingApproval.tool === 'github_post_comment') {
+    const approvalFailure = (message: string): ProcessResponse => ({
+      alexaResponse: message,
+      toolUsed: null,
+      debugPayload: {
+        request: { type: 'approval' },
+        response: { error: message },
+        toolCalls: debugToolCalls,
+      },
+      requiresApproval: false,
+      isFallback: false,
+      error: true,
+    });
+
+    // A write can only be authorized by an opaque ID created server-side.
+    // The browser never supplies the comment body, target repository, or PR number.
+    if (req.approve) {
+      if (!req.approvalId) {
+        return approvalFailure('No server-issued approval ID was provided. Analyze the pull request again before posting.');
+      }
+      if (!accessToken) {
+        return approvalFailure('GitHub sign-in is required to post a real comment. Sign in and analyze the pull request again.');
+      }
+
+      const storedApproval = approvalStore.consume(req.approvalId, req.approvalUserId);
+      if (!storedApproval || storedApproval.tool !== 'github_post_comment') {
+        return approvalFailure('This approval is invalid, expired, already used, or belongs to another session. Analyze the pull request again.');
+      }
+
       const call: MCPToolCall = {
-        name: 'github_post_comment',
-        arguments: req.pendingApproval.arguments,
+        name: storedApproval.tool,
+        arguments: storedApproval.arguments,
         accessToken,
       };
       const result = await dispatchMCPTool(call);
@@ -108,28 +135,26 @@ export class LLMHandler {
         result,
         durationMs: result.metadata?.durationMs || 0,
       });
-      toolUsed = 'github_post_comment';
-      isFallback = isFallback || !!result.metadata?.isFallback;
+      toolUsed = call.name;
 
       const parsed = this.safeParse(result.content[0]?.text || '{}');
-      const alexaResponse = parsed.success
-        ? `Done. I've posted the review comment to pull request number ${req.pendingApproval.arguments.pullNumber}. ${
-            parsed.isFallback
-              ? 'Note: this was simulated in offline mode.'
-              : 'You can view it at the pull request page.'
-          }`
-        : `I encountered an issue posting the comment: ${parsed.message || parsed.error || 'unknown error'}.`;
+      const posted = !result.isError && parsed.success === true;
+      const pullNumber = Number(storedApproval.arguments.pullNumber);
+      const alexaResponse = posted
+        ? `Done. GitHub accepted the review comment for pull request #${pullNumber}.${parsed.commentUrl ? ` View it here: ${parsed.commentUrl}` : ''}`
+        : `I couldn't post the comment. ${String(parsed.error || parsed.message || 'GitHub did not confirm a successful post. The approval cannot be reused; analyze the PR again before retrying.')}`;
 
       return {
         alexaResponse,
         toolUsed,
         debugPayload: {
-          request: { type: 'approval', tool: req.pendingApproval.tool },
+          request: { type: 'approval', approvalIdAccepted: true, tool: storedApproval.tool },
           response: result,
           toolCalls: debugToolCalls,
         },
         requiresApproval: false,
-        isFallback,
+        isFallback: !!result.metadata?.isFallback,
+        error: !posted,
       };
     }
 
@@ -192,26 +217,38 @@ export class LLMHandler {
           const args = (fc.args || {}) as Record<string, unknown>;
 
           if (name === 'github_post_comment') {
+            const draft = String(args.commentBody || '').trim();
+            const pullNumber = Number(args.pullNumber);
+            if (!draft || !Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+              return approvalFailure('I could not create a safe review draft because the comment body or explicit PR number was invalid.');
+            }
+
+            const safeArguments: Record<string, unknown> = {
+              owner: String(args.owner || req.owner),
+              repo: String(args.repo || req.repo),
+              pullNumber,
+              commentBody: draft,
+            };
+            const storedApproval = approvalStore.create(
+              req.approvalUserId,
+              name,
+              safeArguments,
+              draft
+            );
             requiresApproval = true;
-            const draft = String(args.commentBody || 'No comment body provided');
             approvalPayload = {
+              approvalId: storedApproval.id,
               tool: name,
-              arguments: {
-                owner: args.owner || req.owner,
-                repo: args.repo || req.repo,
-                pullNumber: args.pullNumber,
-                commentBody: draft,
-              },
               draftComment: draft,
             };
             toolUsed = name;
-            const alexaResponse = `I've prepared a review comment for pull request number ${args.pullNumber}. Here is the draft:\n\n${draft.slice(0, 500)}${draft.length > 500 ? '...' : ''}\n\nShould I post this review comment to GitHub? Say "yes" or "approve and post comment" to confirm.`;
+            const alexaResponse = `I've prepared a review comment for pull request #${pullNumber}. Here is the draft:\n\n${draft.slice(0, 700)}${draft.length > 700 ? '...' : ''}\n\nNothing has been posted yet. Should I post this review comment to GitHub?`;
             return {
               alexaResponse,
               toolUsed,
               debugPayload: {
                 request: { utterance: req.utterance, functionCall: { name: fc.name } },
-                response: { blocked: true, reason: 'human-in-the-loop' },
+                response: { blocked: true, reason: 'human-in-the-loop', approvalIdCreated: true },
                 toolCalls: debugToolCalls,
                 llmRaw: response.text?.(),
               },
@@ -384,8 +421,38 @@ export class LLMHandler {
         utterance.includes('bugs') ||
         /pr\s*#?\s*\d+/.test(utterance)
       ) {
-        const numMatch = utterance.match(/(?:pr|pull request)?\s*#?\s*(\d+)/i);
-        const pullNumber = numMatch ? parseInt(numMatch[1], 10) : 1;
+        const numMatch = utterance.match(/\b(?:pr|pull request)\s*(?:number\s*)?#?\s*(\d+)\b/i);
+        if (!numMatch) {
+          const message = 'Please specify the exact PR number, for example: "Analyze PR #12 for bugs". I did not assume PR #1.';
+          return {
+            alexaResponse: message,
+            toolUsed: null,
+            debugPayload: {
+              request: { utterance: req.utterance, mode: 'direct-github' },
+              response: { error: 'missing_pr_number' },
+              toolCalls: debugToolCalls,
+            },
+            requiresApproval: false,
+            isFallback: false,
+            error: true,
+          };
+        }
+        const pullNumber = Number(numMatch[1]);
+        if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+          const message = 'The PR number must be a positive integer. Please specify a valid PR number.';
+          return {
+            alexaResponse: message,
+            toolUsed: null,
+            debugPayload: {
+              request: { utterance: req.utterance, mode: 'direct-github' },
+              response: { error: 'invalid_pr_number' },
+              toolCalls: debugToolCalls,
+            },
+            requiresApproval: false,
+            isFallback: false,
+            error: true,
+          };
+        }
 
         const result = await dispatchMCPTool({
           name: 'github_get_pr_diff',
@@ -435,15 +502,21 @@ export class LLMHandler {
         }
         draft += `\n---\n*Generated by CodeSync AI (MCP + deterministic static rules)*`;
 
-        requiresApproval = true;
-        approvalPayload = {
-          tool: 'github_post_comment',
-          arguments: {
+        const storedApproval = approvalStore.create(
+          req.approvalUserId,
+          'github_post_comment',
+          {
             owner: req.owner,
             repo: req.repo,
             pullNumber,
             commentBody: draft,
           },
+          draft
+        );
+        requiresApproval = true;
+        approvalPayload = {
+          approvalId: storedApproval.id,
+          tool: 'github_post_comment',
           draftComment: draft,
         };
 
@@ -455,7 +528,7 @@ export class LLMHandler {
                 .map((f: any) => f.message)
                 .join('; ')}.`;
 
-        alexaResponse = `I've analyzed pull request number ${pullNumber}. ${spokenFindings} Overall score ${analysis.score} out of 100. I've drafted a detailed review comment. Should I post this review comment to GitHub?`;
+        alexaResponse = `I've analyzed pull request number ${pullNumber}. ${spokenFindings} Overall score ${analysis.score} out of 100. Nothing has been posted. Draft comment:\n\n${draft.slice(0, 800)}${draft.length > 800 ? '...' : ''}\n\nShould I post this review comment to GitHub?`;
       } else if (
         utterance.includes('yes') ||
         utterance.includes('approve') ||
