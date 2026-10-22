@@ -95,11 +95,11 @@ export class LLMHandler {
     let toolUsed: string | null = null;
     const accessToken = req.accessToken;
 
-    const approvalFailure = (message: string): ProcessResponse => ({
+    const workflowFailure = (message: string): ProcessResponse => ({
       alexaResponse: message,
       toolUsed: null,
       debugPayload: {
-        request: { type: 'approval' },
+        request: { type: 'workflow' },
         response: { error: message },
         toolCalls: debugToolCalls,
       },
@@ -114,15 +114,15 @@ export class LLMHandler {
     // The browser never supplies the comment body, target repository, or PR number.
     if (req.approve || (Boolean(req.approvalId) && naturalApprovalPhrase)) {
       if (!req.approvalId) {
-        return approvalFailure('No server-issued approval ID was provided. Analyze the pull request again before posting.');
+        return workflowFailure('No server-issued approval ID was provided. Analyze the pull request again before posting.');
       }
       if (!accessToken) {
-        return approvalFailure('GitHub sign-in is required to post a real comment. Sign in and analyze the pull request again.');
+        return workflowFailure('GitHub sign-in is required to post a real comment. Sign in and analyze the pull request again.');
       }
 
       const storedApproval = approvalStore.consume(req.approvalId, req.approvalUserId);
       if (!storedApproval || storedApproval.tool !== 'github_post_comment') {
-        return approvalFailure('This approval is invalid, expired, already used, or belongs to another session. Analyze the pull request again.');
+        return workflowFailure('This approval is invalid, expired, already used, or belongs to another session. Analyze the pull request again.');
       }
 
       const call: MCPToolCall = {
@@ -218,16 +218,33 @@ export class LLMHandler {
           const name = fc.name;
           const args = (fc.args || {}) as Record<string, unknown>;
 
+          if (name === 'github_get_pr_diff') {
+            const explicitMatch = req.utterance.match(/\\b(?:pr|pull request)\\s*(?:number\\s*)?#?\\s*(\\d+)\\b/i);
+            if (!explicitMatch) {
+              return workflowFailure('Please specify the exact PR number, for example: "Analyze PR #12 for bugs". I did not infer a PR number.');
+            }
+            const explicitPullNumber = Number(explicitMatch[1]);
+            if (!Number.isSafeInteger(explicitPullNumber) || explicitPullNumber < 1) {
+              return workflowFailure('The PR number must be a positive integer.');
+            }
+            // Never trust a model-generated number over the user's explicit request.
+            args.pullNumber = explicitPullNumber;
+          }
+
           if (name === 'github_post_comment') {
             const draft = String(args.commentBody || '').trim();
             const pullNumber = Number(args.pullNumber);
+            const explicitMatch = req.utterance.match(/\\b(?:pr|pull request)\\s*(?:number\\s*)?#?\\s*(\\d+)\\b/i);
+            if (!explicitMatch || Number(explicitMatch[1]) !== pullNumber) {
+              return workflowFailure('Please include the exact PR number in your current request before preparing a review comment.');
+            }
             if (!draft || !Number.isSafeInteger(pullNumber) || pullNumber < 1) {
-              return approvalFailure('I could not create a safe review draft because the comment body or explicit PR number was invalid.');
+              return workflowFailure('I could not create a safe review draft because the comment body or explicit PR number was invalid.');
             }
 
             const safeArguments: Record<string, unknown> = {
-              owner: String(args.owner || req.owner),
-              repo: String(args.repo || req.repo),
+              owner: req.owner,
+              repo: req.repo,
               pullNumber,
               commentBody: draft,
             };
@@ -260,8 +277,9 @@ export class LLMHandler {
             };
           }
 
-          if (!args.owner) args.owner = req.owner;
-          if (!args.repo) args.repo = req.repo;
+          // Always operate on the repository selected by the user, not model-supplied values.
+          args.owner = req.owner;
+          args.repo = req.repo;
 
           const mcpResult = await dispatchMCPTool({ name, arguments: args, accessToken });
           debugToolCalls.push({
