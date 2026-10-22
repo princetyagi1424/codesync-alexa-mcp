@@ -11,8 +11,8 @@ interface ChatMessage {
 }
 
 interface PendingApproval {
+  approvalId: string;
   tool: string;
-  arguments: Record<string, unknown>;
   draftComment: string;
 }
 
