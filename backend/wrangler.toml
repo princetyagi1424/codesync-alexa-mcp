@@ -1,0 +1,11 @@
+name = "codesync-ai-backend"
+main = "src/cloudflare-entry.ts"
+compatibility_date = "2026-10-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+NODE_ENV = "production"
+RUNTIME_TARGET = "cloudflare"
+FRONTEND_URL = "https://codesync-ai-frontend.pages.dev"
+CORS_ORIGINS = "https://codesync-ai-frontend.pages.dev"
