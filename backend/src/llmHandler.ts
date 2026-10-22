@@ -108,9 +108,11 @@ export class LLMHandler {
       error: true,
     });
 
+    const naturalApprovalPhrase = /^(?:yes(?:[, ]+(?:please[, ]+)?(?:post(?: it| (?:the )?comment)?|go ahead))?|approve(?: and post(?: (?:the )?comment)?)?|post it|post (?:the )?comment|go ahead(?: and post(?: (?:the )?comment)?)?)[.! ]*$/i.test(req.utterance.trim());
+
     // A write can only be authorized by an opaque ID created server-side.
     // The browser never supplies the comment body, target repository, or PR number.
-    if (req.approve) {
+    if (req.approve || (Boolean(req.approvalId) && naturalApproval)) {
       if (!req.approvalId) {
         return approvalFailure('No server-issued approval ID was provided. Analyze the pull request again before posting.');
       }
