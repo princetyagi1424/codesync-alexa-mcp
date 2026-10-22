@@ -219,7 +219,7 @@ export class LLMHandler {
           const args = (fc.args || {}) as Record<string, unknown>;
 
           if (name === 'github_get_pr_diff') {
-            const explicitMatch = req.utterance.match(/\\b(?:pr|pull request)\\s*(?:number\\s*)?#?\\s*(\\d+)\\b/i);
+            const explicitMatch = req.utterance.match(/\b(?:pr|pull request)\s*(?:number\s*)?#?\s*(\d+)\b/i);
             if (!explicitMatch) {
               return workflowFailure('Please specify the exact PR number, for example: "Analyze PR #12 for bugs". I did not infer a PR number.');
             }
@@ -234,7 +234,7 @@ export class LLMHandler {
           if (name === 'github_post_comment') {
             const draft = String(args.commentBody || '').trim();
             const pullNumber = Number(args.pullNumber);
-            const explicitMatch = req.utterance.match(/\\b(?:pr|pull request)\\s*(?:number\\s*)?#?\\s*(\\d+)\\b/i);
+            const explicitMatch = req.utterance.match(/\b(?:pr|pull request)\s*(?:number\s*)?#?\s*(\d+)\b/i);
             if (!explicitMatch || Number(explicitMatch[1]) !== pullNumber) {
               return workflowFailure('Please include the exact PR number in your current request before preparing a review comment.');
             }
