@@ -1,5 +1,3 @@
-import 'dotenv/config';
-
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import session from 'express-session';
@@ -18,8 +16,11 @@ import {
 } from './auth';
 
 const app = express();
+export { app };
+const isCloudflareWorker = process.env.RUNTIME_TARGET === 'cloudflare';
 const startedAt = Date.now();
 
+if (!isCloudflareWorker) {
 // Fatal-error diagnostics: log the full error, then exit non-zero so the
 // platform restarts the process. Errors are never swallowed.
 process.on('uncaughtException', (error) => {
@@ -39,6 +40,7 @@ process.on('exit', (code) => {
     )}s`
   );
 });
+}
 
 // Request log: method, path, status and duration only.
 // Never logs query strings (OAuth callbacks carry codes), headers or bodies.
@@ -399,6 +401,7 @@ app.use(
   }
 );
 
+if (!isCloudflareWorker) {
 // IMPORTANT:
 // Bind to 0.0.0.0 so the hosting platform can reach this process.
 // Use the port provided by the hosting platform whenever available.
@@ -467,3 +470,4 @@ process.on('SIGTERM', () => {
     process.exit(0);
   });
 });
+}
