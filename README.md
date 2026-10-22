@@ -1,250 +1,120 @@
-# CodeSync AI
+# CodeSync AI — Voice-first PR Guardian for Alexa+
 
-**MCP-powered conversational developer assistant for the Alexa+ Track — Amazon Developer Hackathon 2026**
+CodeSync AI is a **browser-based Alexa+ simulation** for maintainers who want to triage GitHub pull requests through voice or text. It combines real per-user GitHub OAuth, a bounded pull-request workflow, deterministic static checks on real PR diffs, a visible tool-execution panel, and an explicit approval gate before writing a review comment.
 
-CodeSync AI bridges natural-language voice/text commands to secure GitHub repository actions via a self-hosted TypeScript MCP server, a React Alexa+ Web Simulator, a deterministic static code analyzer, and a live MCP Inspector panel.
+> **Track honesty:** this submission uses the Alexa+ track's documented simulated-experience path. It is not claiming to be connected to an invite-only Alexa+ runtime, nor is the current code a production Streamable HTTP MCP host. The tool schemas and dispatch layer are used inside the web simulation.
 
----
+## User workflow
 
-## Architecture
+1. Sign in with GitHub through OAuth.
+2. Choose a repository the signed-in user can access.
+3. Say or type **Check open PRs**. The app loads that repository's real open PRs.
+4. Choose an actual PR number from the dynamically generated actions or type **Analyze PR number N for security issues**.
+5. CodeSync fetches that PR's real changed-file patches and runs deterministic checks for likely secrets, risky SQL construction, debug logging, TODO markers, hard-coded URLs, and async error-handling patterns.
+6. The app drafts a review comment. It **does not post automatically**. The user must explicitly approve the write.
+7. The inspector shows request/tool results and timing so the user can see what actually happened.
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     Frontend (React + Vite + Tailwind)                   │
-│  ┌──────────────────────────────┐  ┌──────────────────────────────────┐ │
-│  │   Alexa Simulator (60%)      │  │   MCP Live Inspector (40%)       │ │
-│  │   • Echo Show frame          │  │   • JSON-RPC style payloads      │ │
-│  │   • Chat + quick actions     │  │   • Tool timing & status         │ │
-│  │   • Human-approval UI        │  │   • Zero secrets in bundle       │ │
-│  └──────────────┬───────────────┘  └──────────────────────────────────┘ │
-│                 │ POST /api/alexa/process                                │
-└─────────────────┼───────────────────────────────────────────────────────┘
-                  ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│              Backend (Express + TypeScript + MCP SDK)                    │
-│  ┌────────────────┐  ┌─────────────────┐  ┌──────────────────────────┐  │
-│  │  llmHandler.ts │  │  mcpServer.ts   │  │  githubService.ts        │  │
-│  │  Gemini +      │◄─┤  Tool schemas   │◄─┤  Axios + static rules    │  │
-│  │  tool loop +   │  │  dispatchMCPTool│  │  secrets / console.log /  │  │
-│  │  HITL guard    │  │                 │  │  raw SQL / try-catch     │  │
-│  └────────────────┘  └─────────────────┘  └────────────┬─────────────┘  │
-│                                                         │                │
-│  Resilient fallback → local JSON mocks when APIs fail   │                │
-└─────────────────────────────────────────────────────────┼────────────────┘
-                                                          ▼
-                                              GitHub REST API
-                                              (PAT in .env only)
-```
+## Why this is useful
 
-### End-to-End Workflow (enforced)
+Maintainers often switch between GitHub, a terminal, and chat just to triage a small pull request. CodeSync condenses the first review pass into a voice-friendly sequence while keeping write actions under human control. The goal is not to replace a human reviewer: deterministic findings are cues for review, not proof of a vulnerability.
 
-```
-User Input
-  → MCP Tool: github_get_open_prs
-  → MCP Tool: github_get_pr_diff
-  → Deterministic Static Bug Pattern Checker + Gemini analysis
-  → Human Approval Prompt  ("Should I post this review comment to GitHub?")
-  → MCP Tool: github_post_comment   ← NEVER auto-executed
-```
+## Implemented capabilities
 
----
+- GitHub OAuth sign-in and repository list from the authenticated account.
+- Real open-PR list and real changed-file patches using GitHub API requests.
+- Deterministic static analysis over changed lines.
+- Draft-first review comments with an explicit approval step.
+- Live request/tool inspector for debugging and demo transparency.
+- Direct handling of supported PR commands so a temporary Gemini 503 does not block basic GitHub workflows.
+- Real API failures are shown as errors; the app no longer fabricates PRs, diffs, or successful comment URLs after failed requests.
 
-## Non-Negotiable Security Rules
+## Current limits — important for judges
 
-| Rule | Implementation |
-|------|----------------|
-| **Zero Frontend Key Exposure** | `GITHUB_TOKEN` and `GEMINI_API_KEY` live only in `backend/.env`. Frontend never receives them. |
-| **Human-in-the-Loop Writes** | `github_post_comment` is blocked in the LLM tool loop. Approval requires explicit user confirmation. |
-| **Resilient Fallback** | Any GitHub or Gemini failure switches to pre-cached mocks so demos never break. |
-| **Deterministic Static Engine** | Pattern matcher in `githubService.ts` detects secrets, `console.log`, raw SQL, missing try-catch. |
+- The supported GitHub tool set is intentionally narrow: list open PRs, fetch/analyze a PR diff, and post a PR conversation comment after approval.
+- It does **not** currently edit repository files, commit changes, create branches, merge PRs, or act as a general coding agent.
+- Free-form intent understanding depends on the configured Gemini API and can be affected by provider rate limits or temporary service errors.
+- Static analysis is rule-based and can produce false positives/negatives; it is not a substitute for a full security audit.
+- The default Express session store is intended for local demos, not a multi-instance production service. A durable session store and deployment-specific security review are required before production use.
+- No GitHub access token or Gemini key should be put in frontend code or committed to the repository.
 
----
+## Tech stack
 
-## Tech Stack
+- React, Vite, TypeScript, Tailwind CSS
+- Node.js, Express, TypeScript
+- GitHub OAuth and REST API
+- Gemini API for natural-language orchestration when available
+- App-level tool schemas/dispatch and an inspector in the simulated Alexa+ experience
 
-- **Backend:** Node.js, Express, TypeScript, Axios, `@google/generative-ai`, `@modelcontextprotocol/sdk`
-- **Frontend:** React 18, Vite, TypeScript, Tailwind CSS, Lucide React
-
----
-
-## API Specs
-
-### `GET /api/health`
-Returns service status, configured tools, and whether secrets are present (booleans only).
-
-### `GET /api/mcp/tools`
-Lists the three MCP tool schemas.
-
-### `POST /api/alexa/process`
-
-**Request body:**
-```json
-{
-  "utterance": "Analyze PR #1 for bugs",
-  "owner": "octocat",
-  "repo": "Hello-World",
-  "approve": false,
-  "pendingApproval": null,
-  "conversationHistory": []
-}
-```
-
-**Response:**
-```json
-{
-  "alexaResponse": "I've analyzed pull request number 1. ... Should I post this review comment to GitHub?",
-  "toolUsed": "github_get_pr_diff",
-  "debugPayload": {
-    "request": {},
-    "response": {},
-    "toolCalls": [
-      {
-        "name": "github_get_pr_diff",
-        "arguments": {},
-        "result": {},
-        "durationMs": 42
-      }
-    ]
-  },
-  "requiresApproval": true,
-  "approvalPayload": {
-    "tool": "github_post_comment",
-    "arguments": { "owner": "...", "repo": "...", "pullNumber": 1, "commentBody": "..." },
-    "draftComment": "..."
-  },
-  "isFallback": false
-}
-```
-
----
-
-## Quick Start
+## Local development
 
 ### Prerequisites
-- Node.js ≥ 18
-- (Optional) GitHub Personal Access Token with `repo` scope
-- (Optional) Google AI Studio Gemini API key
 
-### 1. Clone & configure
-```bash
-cd CodeSync-AI
-cp backend/.env.example backend/.env
-# Edit backend/.env and add GITHUB_TOKEN / GEMINI_API_KEY if you have them
-# Without keys the app runs fully in offline demo mode
-```
+- Node.js 22 or newer
+- npm
+- A GitHub OAuth App for local development
+- A Gemini API key if you want free-form Gemini responses; common PR commands can still use the direct workflow path
 
-### 2. One-command setup & launch
-```bash
-chmod +x setup.sh
-./setup.sh
-```
+### Configure the backend
 
-Or manually:
-```bash
-# Backend
-cd backend && npm install && npm run dev
+From the repository root:
 
-# Frontend (new terminal)
-cd frontend && npm install && npm run dev
-```
+    cd backend
+    npm install
+    Copy-Item .env.example .env
+    notepad .env
 
-- Backend: http://localhost:5000  
-- Frontend: http://localhost:5173  
+Set these values in backend/.env:
 
-### 3. Demo flow
-1. Open the simulator.
-2. Click **Check open PRs** (or say the equivalent).
-3. Click **Analyze PR #1**.
-4. Review the drafted comment and the MCP Inspector payloads.
-5. Click **Approve & post** — only then is `github_post_comment` executed.
+    PORT=5000
+    NODE_ENV=development
+    SESSION_SECRET=replace-with-a-long-random-value
+    FRONTEND_URL=http://localhost:5173
+    GITHUB_CLIENT_ID=your-oauth-client-id
+    GITHUB_CLIENT_SECRET=your-oauth-client-secret
+    GITHUB_CALLBACK_URL=http://localhost:5000/api/auth/github/callback
+    GEMINI_API_KEY=your-gemini-api-key
 
----
+Do not commit .env. Never paste secrets into issue reports, screenshots, or chat.
 
-## Project Structure
+### GitHub OAuth local settings
 
-```
-CodeSync-AI/
-├── backend/
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── .env.example
-│   └── src/
-│       ├── index.ts          # Express server
-│       ├── llmHandler.ts     # Gemini + HITL tool loop
-│       ├── mcpServer.ts      # MCP tool schemas & router
-│       └── githubService.ts  # GitHub API + static analyzer + mocks
-├── frontend/
-│   ├── package.json
-│   ├── tailwind.config.js
-│   ├── vite.config.ts
-│   └── src/
-│       ├── App.tsx
-│       ├── main.tsx
-│       ├── index.css
-│       └── components/
-│           ├── AlexaSimulator.tsx
-│           └── McpInspector.tsx
-├── README.md
-├── DEMO_SCRIPT.md
-├── FEEDBACK.md
-└── setup.sh
-```
+In GitHub Developer Settings:
 
----
+- Homepage URL: http://localhost:5173
+- Authorization callback URL: http://localhost:5000/api/auth/github/callback
 
-## MCP Tools
+The callback configured in the backend must match the GitHub OAuth App exactly.
 
-| Tool | Description | Write? |
-|------|-------------|--------|
-| `github_get_open_prs` | List open pull requests | No |
-| `github_get_pr_diff` | Fetch diff + run static analysis | No |
-| `github_post_comment` | Post review comment | **Yes — requires human approval** |
+### Run locally
 
----
+Terminal 1:
 
-## License
+    cd backend
+    npm run dev
 
-MIT — built for the Amazon Developer Hackathon 2026 (Alexa+ Track).
+Terminal 2:
 
----
+    cd frontend
+    npm install
+    npm run dev
 
-## GitHub OAuth Setup (Production / Real Repos)
+Open http://localhost:5173.
 
-End users **never** create personal access tokens. They click **Sign in with GitHub**.
+### Build checks
 
-### 1. Create a GitHub OAuth App
+    npm run build --workspace=codesync-ai-backend
+    npm run build --workspace=codesync-ai-frontend
 
-1. Open https://github.com/settings/developers → **New OAuth App**
-2. **Application name:** CodeSync AI
-3. **Homepage URL:** `http://localhost:5173` (or your production frontend URL)
-4. **Authorization callback URL:** `http://localhost:5000/api/auth/github/callback`
-5. Copy **Client ID** and generate a **Client Secret**
+## Demo & submission materials
 
-### 2. Configure backend `.env`
+- [Demo script](./DEMO_SCRIPT.md)
+- [Developer feedback](./FEEDBACK.md)
+- [Friction log](./FRICTION_LOG.md)
+- [Hackathon submission draft](./HACKATHON_SUBMISSION.md)
 
-```env
-GITHUB_CLIENT_ID=Iv1.xxxxxxxx
-GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxx
-SESSION_SECRET=a-long-random-string
-FRONTEND_URL=http://localhost:5173
-GEMINI_API_KEY=your_server_side_gemini_key
-```
+## Safety behavior
 
-### 3. Restart backend
-
-```bash
-cd backend
-npm install
-npm run dev
-```
-
-### Security notes
-
-| Item | Behavior |
-|------|----------|
-| User GitHub token | Stored only in **HTTP-only server session** — never in localStorage or frontend JS |
-| Gemini API key | Single **server-side master key**; users never see it |
-| Rate limit | 20 requests / minute / authenticated user on `/api/alexa/process` |
-| Write actions | Still require **human approval** before `github_post_comment` |
-| No OAuth configured | App still runs in **offline demo mode** with mocks |
-
+- GitHub writes are gated behind explicit user approval in the conversational workflow.
+- A failed GitHub request must not be presented as a successful operation.
+- An empty open-PR list is a valid result; use actual PR numbers returned by GitHub.
+- The inspector can contain repository metadata and code snippets. Do not include secrets or sensitive private-repository content in public recordings.
