@@ -194,7 +194,7 @@ export function createAuthRouter(): Router {
     }
   });
 
-  // Logout
+  // Logout — clear the real session cookie name used by express-session config
   router.post('/logout', (req: Request, res: Response) => {
     req.logout((err) => {
       if (err) {
@@ -204,6 +204,8 @@ export function createAuthRouter(): Router {
         if (destroyErr) {
           console.error('[Auth] session destroy error', destroyErr);
         }
+        // Session cookie is configured as name: 'codesync.sid' in index.ts
+        res.clearCookie('codesync.sid');
         res.clearCookie('connect.sid');
         res.json({ ok: true });
       });
