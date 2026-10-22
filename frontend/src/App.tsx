@@ -166,6 +166,7 @@ export default function App() {
     }
     setUser(null);
     setRepos([]);
+    setPendingApproval(null);
     setMessages((prev) => [
       ...prev,
       {
@@ -179,6 +180,8 @@ export default function App() {
 
   const selectRepo = (r: RepoSummary) => {
     setRepo({ owner: r.owner, repo: r.name });
+    // Do not leave a write approval active after changing its repository context.
+    setPendingApproval(null);
     setAvailablePullRequests([]);
     setRepoDropdownOpen(false);
     setRepoSearch('');
