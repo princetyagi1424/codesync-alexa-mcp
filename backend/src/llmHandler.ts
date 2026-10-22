@@ -112,7 +112,7 @@ export class LLMHandler {
 
     // A write can only be authorized by an opaque ID created server-side.
     // The browser never supplies the comment body, target repository, or PR number.
-    if (req.approve || (Boolean(req.approvalId) && naturalApproval)) {
+    if (req.approve || (Boolean(req.approvalId) && naturalApprovalPhrase)) {
       if (!req.approvalId) {
         return approvalFailure('No server-issued approval ID was provided. Analyze the pull request again before posting.');
       }
